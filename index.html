@@ -1,0 +1,913 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Puesto de Supervivencia</title>
+<style>
+  body{margin:0;background:#1b1b22;color:#eee;font-family:"Segoe UI",system-ui,sans-serif;display:flex;justify-content:center;align-items:flex-start;gap:12px;padding:12px;flex-wrap:wrap}
+  #wrap{position:relative}
+  canvas{display:block;border:3px solid #333;border-radius:6px;background:#000}
+  #side{width:270px;background:#25252e;border:3px solid #333;border-radius:6px;padding:12px;box-sizing:border-box;min-height:646px;font-size:14px}
+  #side h1{font-size:18px;margin:0 0 8px}
+  #side h3{font-size:14px;margin:12px 0 6px;color:#ffcf6b}
+  .bar{height:14px;background:#111;border-radius:7px;overflow:hidden;margin:3px 0 8px}
+  .bar>div{height:100%;transition:width .1s}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 8px}
+  .grid span.zero{opacity:.35}
+  #tray .slot{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;margin:2px;border:2px solid #444;border-radius:6px;background:#1a1a20;font-size:22px;position:relative}
+  #tray .slot.sel{border-color:#ffcf6b}
+  #tray .slot small{position:absolute;top:0;left:3px;font-size:10px;color:#999}
+  .keys{font-size:12px;color:#bbb;line-height:1.6}
+  .keys b{background:#444;color:#fff;padding:0 5px;border-radius:3px}
+  #room{background:#1d1d26;border-radius:6px;padding:8px;margin-top:8px;font-size:13px}
+  #room .code{font-size:20px;letter-spacing:3px;color:#7dff7d;font-weight:bold}
+  .modal{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.6)}
+  .box{background:#2a2a35;border:2px solid #666;border-radius:10px;padding:16px 20px;width:580px;max-height:590px;overflow:auto;box-sizing:border-box}
+  .box h2{margin:0 0 10px}
+  .box h3{margin:14px 0 6px;color:#ffcf6b}
+  .item{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #3a3a46}
+  .item .em{font-size:22px;width:30px;text-align:center}
+  .item .txt{flex:1}
+  .item .txt small{color:#aaa}
+  button{background:#3d7a3d;color:#fff;border:0;border-radius:5px;padding:6px 10px;cursor:pointer;font-size:13px}
+  button:hover{background:#4c964c}
+  button:disabled{background:#555;color:#999;cursor:default}
+  button.blue{background:#2f5f9e} button.blue:hover{background:#3a72bb}
+  button.gray{background:#555} button.gray:hover{background:#666}
+  input{background:#1a1a22;color:#fff;border:1px solid #555;border-radius:5px;padding:7px 9px;font-size:14px}
+  .hint{color:#aaa;font-size:12px;margin-top:10px}
+  .big{font-size:16px;padding:10px 18px}
+  .play{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+  #status{color:#ffd36b;min-height:18px;font-size:13px}
+</style>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c" width="960" height="640"></canvas>
+  <div class="modal" id="modal"><div class="box" id="box"></div></div>
+</div>
+<div id="side">
+  <h1>🍳 Puesto de Supervivencia</h1>
+  <div>💰 <b id="money"></b> &nbsp; 📅 Día <b id="day"></b> &nbsp; 🕒 <span id="clock"></span></div>
+  <div style="margin-top:4px">🪙 <b id="tokens"></b> tokens &nbsp; <span id="cls"></span></div>
+  <div id="room"></div>
+  <h3>🍖 Hambre</h3><div class="bar"><div id="hbar"></div></div>
+  <h3>❤️ Salud</h3><div class="bar"><div id="lbar" style="background:#d94848"></div></div>
+  <h3>Ingredientes (compartidos)</h3><div class="grid" id="inv"></div>
+  <h3>Tu bandeja</h3><div id="tray"></div>
+  <h3>Controles</h3>
+  <div class="keys">
+    <b>WASD</b> / flechas: moverse<br>
+    <b>E</b>: usar (fogón, mostrador, tienda)<br>
+    <b>E</b> mantener: buscar en caja<br>
+    <b>1-5</b>: elegir plato · <b>F</b>: comer · <b>X</b>: tirar<br>
+    <b>Esc</b>: cerrar menú
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const EMOJI_FONT = '"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+
+// ---------- Datos ----------
+const ING = {
+  pan:{n:'Pan',e:'🍞',p:2}, papa:{n:'Papa',e:'🥔',p:2}, agua:{n:'Agua',e:'💧',p:1},
+  cebolla:{n:'Cebolla',e:'🧅',p:2}, aceite:{n:'Aceite',e:'🫒',p:3}, huevo:{n:'Huevo',e:'🥚',p:3},
+  tomate:{n:'Tomate',e:'🍅',p:3}, queso:{n:'Queso',e:'🧀',p:5}, lechuga:{n:'Lechuga',e:'🥬',p:3},
+  carne:{n:'Carne',e:'🥩',p:8}, fideos:{n:'Fideos',e:'🥢',p:4}, soya:{n:'Salsa de soya',e:'🫙',p:4},
+};
+const BASIC = [['pan',30],['papa',30],['agua',25],['cebolla',15]];
+const REC = {
+  tostada: {n:'Pan tostado',    e:'🍞', need:{pan:1}, t:3, food:15, price:6},
+  papas:   {n:'Papas fritas',   e:'🍟', need:{papa:1,aceite:1}, t:5, food:22, price:12},
+  sopa:    {n:'Sopa de cebolla',e:'🍲', need:{papa:1,agua:1,cebolla:1}, t:7, food:35, price:16},
+  huevo:   {n:'Huevo frito',    e:'🍳', need:{huevo:1,aceite:1}, t:4, food:22, price:12, cost:20},
+  sandwich:{n:'Sándwich',       e:'🥪', need:{pan:1,queso:1,tomate:1}, t:5, food:32, price:22, cost:45},
+  burger:  {n:'Hamburguesa',    e:'🍔', need:{pan:1,carne:1,lechuga:1}, t:8, food:45, price:34, cost:80},
+  ramen:   {n:'Ramen',          e:'🍜', need:{fideos:1,agua:2,carne:1,huevo:1,cebolla:1,soya:1}, t:12, food:70, price:75, cost:120},
+  quemada: {n:'Comida quemada', e:'🪨', need:{}, t:0, food:6, price:0},
+};
+const START_REC = ['tostada','papas','sopa'];
+const UPG = [
+  {id:'fogon2',  n:'Segundo fogón',    d:'Cocina 2 platos a la vez',           cost:35},
+  {id:'fogon3',  n:'Tercer fogón',     d:'Cocina 3 platos a la vez',           cost:70, req:'fogon2'},
+  {id:'rapido',  n:'Fogón a gas',      d:'Cocinas 35% más rápido',             cost:50},
+  {id:'bandeja', n:'Bandeja grande',   d:'Llevas 5 platos en vez de 3',        cost:30},
+  {id:'linterna',n:'Linterna',         d:'Ves más y buscas mejor en el depósito', cost:25},
+  {id:'letrero', n:'Letrero luminoso', d:'Llegan más clientes',                cost:40},
+  {id:'sillas',  n:'Bancos',           d:'Los clientes esperan 50% más',       cost:30},
+  {id:'termo',   n:'Tapa térmica',     d:'La comida tarda el doble en quemarse', cost:20},
+];
+const CLASSES = [
+  {id:'novato',      n:'Novato',       e:'🧑‍🍳', cost:0,   d:'Sin nada especial. Sólo ganas de cocinar.'},
+  {id:'principiante',n:'Principiante', e:'🎒', cost:10,  d:'Empiezas con más ingredientes básicos (+3 pan, +3 papa, +3 agua, +2 cebolla).',
+    inv:{pan:3, papa:3, agua:3, cebolla:2}},
+  {id:'sazonador',   n:'Sazonador',    e:'🧂', cost:15,  d:'Empiezas con condimentos (+4 aceite, +3 salsa de soya).',
+    inv:{aceite:4, soya:3}},
+  {id:'chef',        n:'Chef',         e:'👨‍🍳', cost:25,  d:'Cocinas la comida un 20% más rápido.', cook:0.8},
+  {id:'maestro',     n:'Maestro',      e:'🥋', cost:100, d:'Haces TODO un 25% más rápido (cocinar, caminar, buscar) y empiezas con muchos más ingredientes.',
+    cook:0.75, speed:1.25, search:0.75,
+    inv:{pan:4, papa:4, agua:4, cebolla:3, aceite:3, huevo:2, tomate:2, queso:2, lechuga:2, carne:2, fideos:1, soya:1}},
+];
+const TOKEN_CHANCE = 0.65;
+const MAX_PLAYERS = 4;
+const PLAYER_COLORS = ['#e74c3c','#3498db','#2ecc71','#f1c40f'];
+const DAY_LEN = 180;
+const SLOTS = [100, 205, 310, 415];
+const STREET_Y = 62;
+const WALLS = [
+  {x:0,y:100,w:960,h:25},
+  {x:0,y:100,w:20,h:540},{x:940,y:100,w:20,h:540},{x:0,y:620,w:960,h:20},
+  {x:500,y:125,w:20,h:175},{x:500,y:380,w:20,h:240},
+];
+const SHOP = {x:400,y:565,w:80,h:44};
+const CRATE_POS = [[560,160],[650,230],[860,160],[890,300],[610,420],[760,360],[880,530],[570,560],[700,560],[790,190]];
+const CUST_COLORS = ['#e67e22','#3498db','#9b59b6','#1abc9c','#e74c3c','#f1c40f','#95a5a6','#ff8fab'];
+const PEER_PREFIX = 'puesto-superviv-';
+
+// ---------- Progreso guardado (por navegador) ----------
+const META_KEY = 'puesto-supervivencia-meta';
+let META = {tokens:0, owned:['novato'], cls:'novato', name:''};
+try { const m = JSON.parse(localStorage.getItem(META_KEY)); if (m) META = Object.assign(META, m); } catch(e){}
+function saveMeta(){ try { localStorage.setItem(META_KEY, JSON.stringify(META)); } catch(e){} }
+const curClass = () => CLASSES.find(c => c.id === META.cls) || CLASSES[0];
+const clsOf = p => CLASSES.find(c => c.id === p.cls) || CLASSES[0];
+
+// ---------- Estado ----------
+// NET.mode: null (lobby) | 'solo' | 'host' | 'client'
+let NET = {mode:null};
+let MY_ID = 'h';
+let S;                 // estado del juego (autoritativo en solo/host, copia en client)
+let UI = {modal:null, stove:null, sig:'', overShown:false};
+let keys = {}, lastHud = 0, lastSent = '', DISP = {};
+
+function newGame(){
+  const inv = {}; for (const k in ING) inv[k] = 0;
+  inv.pan = 2; inv.papa = 1; inv.aceite = 1;
+  return {
+    money:15, inv, recipes:[...START_REC], upg:{}, day:1, time:0,
+    customers:[], spawnT:4, floats:[], over:false, served:0, earned:0, lost:0, found:0, joinN:0,
+    stoves:[60,150,240].map((x,i)=>({x, y:565, w:70, h:44, on:i===0, rec:null, t:0, dur:1, done:false, burn:0})),
+    crates:CRATE_POS.map(([x,y])=>({x, y, w:38, h:38, empty:false, refill:0})),
+    players:{},
+  };
+}
+function addPlayer(id, name, clsId){
+  const cls = CLASSES.find(c => c.id === clsId) || CLASSES[0];
+  for (const k in (cls.inv || {})) S.inv[k] += cls.inv[k];
+  const n = S.joinN++;
+  S.players[id] = {id, name:(String(name||'').slice(0,14) || 'Cocinero ' + (n+1)), cls:cls.id,
+    color:PLAYER_COLORS[n % PLAYER_COLORS.length], x:260 + (n%2)*60, y:330 + Math.floor(n/2)*50, bob:0, moving:false,
+    hunger:100, health:100, tray:[], sel:0, search:null, input:{}, alive:true, tokens:0};
+  return S.players[id];
+}
+
+// ---------- Utilidades ----------
+const rand = (a,b) => a + Math.random()*(b-a);
+const trayMax = () => S.upg.bandeja ? 5 : 3;
+const burnTime = () => S.upg.termo ? 30 : 15;
+const cookMul = p => (clsOf(p).cook || 1) * (S.upg.rapido ? 0.65 : 1);
+const speedMul = p => clsOf(p).speed || 1;
+const searchTime = p => (S.upg.linterna ? 1.6 : 2.5) * (clsOf(p).search || 1);
+const me = () => S && S.players[MY_ID];
+const plist = () => Object.values(S.players);
+function float(text, x, y, color='#fff', owner=null){ S.floats.push({text, x, y, t:0, color, owner}); }
+function pfloat(p, text, color){ float(text, p.x, p.y-30, color, p.id); }
+function canMake(id){ const n = REC[id].need; for (const k in n) if (S.inv[k] < n[k]) return false; return true; }
+function weighted(list){ let tot = list.reduce((s,x)=>s+x[1],0), r = Math.random()*tot; for (const [k,w] of list){ if ((r-=w) < 0) return k; } return list[0][0]; }
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function hits(x, y){
+  const r = 12;
+  for (const o of [...WALLS, ...S.stoves, SHOP, ...S.crates])
+    if (x+r > o.x && x-r < o.x+o.w && y+r > o.y && y-r < o.y+o.h) return true;
+  return false;
+}
+
+// ---------- Interacción (lógica, corre en solo/host) ----------
+function nearestInteract(p){
+  const list = [];
+  S.stoves.forEach((st,i) => list.push({type:'stove', i, cx:st.x+st.w/2, cy:st.y+st.h/2,
+    label: !st.on ? 'Fogón bloqueado (cómpralo en la tienda)' : !st.rec ? 'Cocinar' : st.done ? 'Recoger plato' : 'Cocinando...'}));
+  list.push({type:'shop', cx:SHOP.x+SHOP.w/2, cy:SHOP.y+SHOP.h/2, label:'Tienda'});
+  S.crates.forEach((c,i) => list.push({type:'crate', i, cx:c.x+19, cy:c.y+19, label: c.empty ? 'Caja vacía' : 'Buscar (mantener E)'}));
+  if (p.x < 500) list.push({type:'counter', cx:Math.max(40,Math.min(480,p.x)), cy:112, label:'Servir'});
+  let best = null, bd = 60;
+  for (const it of list){ const d = Math.hypot(it.cx-p.x, it.cy-p.y); if (d < bd){ bd = d; best = it; } }
+  return best;
+}
+
+function interact(p){
+  const t = nearestInteract(p); if (!t) return;
+  if (t.type === 'stove') stoveAct(p, t.i);
+  else if (t.type === 'shop') openFor(p, 'shop');
+  else if (t.type === 'counter') serve(p);
+  else if (t.type === 'crate'){
+    if (S.crates[t.i].empty) pfloat(p, 'Ya está vacía...', '#aaa');
+    else p.search = {ci:t.i, t:0};
+  }
+}
+
+function openFor(p, kind, i){
+  if (p.id === MY_ID) openUI(kind, i);
+  else sendTo(p.id, {t:'open', k:kind, i});
+}
+
+function stoveAct(p, i){
+  const st = S.stoves[i];
+  if (!st.on){ pfloat(p, 'Fogón bloqueado 🔒', '#aaa'); return; }
+  if (!st.rec){ openFor(p, 'cook', i); return; }
+  if (!st.done){ pfloat(p, 'Todavía cocinando...', '#aaa'); return; }
+  if (p.tray.length >= trayMax()){ pfloat(p, '¡Bandeja llena!', '#ff8080'); return; }
+  p.tray.push(st.rec);
+  st.rec = null; st.done = false;
+}
+
+function cook(p, i, id){
+  const st = S.stoves[i];
+  if (!st || !st.on || st.rec || !REC[id] || !S.recipes.includes(id) || !canMake(id)){ pfloat(p, 'No se pudo cocinar', '#ff8080'); return; }
+  for (const k in REC[id].need) S.inv[k] -= REC[id].need[k];
+  st.rec = id; st.t = 0; st.done = false; st.burn = 0;
+  st.dur = REC[id].t * cookMul(p);
+}
+
+function serve(p){
+  const waiting = S.customers.filter(c => c.state === 'wait');
+  if (!waiting.length){ pfloat(p, 'No hay clientes esperando', '#aaa'); return; }
+  waiting.sort((a,b) => Math.abs(a.x-p.x) - Math.abs(b.x-p.x));
+  for (const c of waiting){
+    const i = p.tray.indexOf(c.order);
+    if (i >= 0){
+      p.tray.splice(i,1); fixSel(p);
+      const r = REC[c.order];
+      const tip = Math.round(r.price * 0.4 * (c.pat / c.patMax));
+      const pay = r.price + tip;
+      S.money += pay; S.earned += pay; S.served++;
+      c.state = 'leave'; c.happy = true;
+      float('+$' + pay + (tip ? ' (propina $' + tip + ')' : ''), c.x, STREET_Y-40, '#7dff7d');
+      if (Math.random() < TOKEN_CHANCE){
+        p.tokens++;
+        if (p.id === MY_ID){ META.tokens++; saveMeta(); }
+        else sendTo(p.id, {t:'token'});
+        float('+1 🪙 para ' + p.name, c.x, STREET_Y-20, '#ffb3ff');
+      }
+      return;
+    }
+  }
+  pfloat(p, 'No tienes lo que piden', '#ff8080');
+}
+
+function fixSel(p){ p.sel = Math.max(0, Math.min(p.sel, p.tray.length-1)); }
+
+function eat(p){
+  if (!p.tray.length){ pfloat(p, 'No tienes comida en la bandeja', '#ff8080'); return; }
+  const id = p.tray.splice(p.sel,1)[0]; fixSel(p);
+  const r = REC[id];
+  p.hunger = Math.min(100, p.hunger + r.food);
+  if (id === 'quemada'){ p.health = Math.max(1, p.health-8); pfloat(p, 'Puaj... +' + r.food + ' 🤢', '#c9a26b'); }
+  else pfloat(p, '¡Ñam! +' + r.food + ' hambre', '#ffd36b');
+}
+
+function discard(p){
+  if (!p.tray.length) return;
+  const id = p.tray.splice(p.sel,1)[0]; fixSel(p);
+  pfloat(p, 'Tiraste ' + REC[id].n, '#aaa');
+}
+
+function finishSearch(p, c){
+  c.empty = true; c.refill = rand(60,120);
+  const chance = S.upg.linterna ? 0.5 : 0.3;
+  if (Math.random() < chance){
+    const k = weighted(BASIC), q = Math.random() < 0.25 ? 2 : 1;
+    S.inv[k] += q; S.found += q;
+    float(p.name + ' encontró ' + q + ' ' + ING[k].e + ' ' + ING[k].n + '!', p.x, p.y-30, '#7dff7d');
+  } else if (Math.random() < 0.08){
+    const m = Math.round(rand(2,5)); S.money += m;
+    float(p.name + ' encontró $' + m, p.x, p.y-30, '#ffd36b');
+  } else pfloat(p, 'Nada... sólo polvo', '#aaa');
+}
+
+function buy(k, q){ q = q === 5 ? 5 : 1; if (!ING[k]) return; const c = ING[k].p*q; if (S.money < c) return; S.money -= c; S.inv[k] += q; }
+function buyRecipe(id){ const r = REC[id]; if (!r || !r.cost || S.money < r.cost || S.recipes.includes(id)) return; S.money -= r.cost; S.recipes.push(id); }
+function buyUpg(id){
+  const u = UPG.find(x => x.id === id);
+  if (!u || S.money < u.cost || S.upg[id] || (u.req && !S.upg[u.req])) return;
+  S.money -= u.cost; S.upg[id] = true;
+  if (id === 'fogon2') S.stoves[1].on = true;
+  if (id === 'fogon3') S.stoves[2].on = true;
+}
+
+// Comandos de un jugador (local o remoto) — sólo los ejecuta quien manda (solo/host)
+function handleCmd(pid, m){
+  const p = S.players[pid];
+  if (!p || S.over || !m) return;
+  if (m.t === 'in'){ p.input = m.v || {}; return; }
+  if (!p.alive) return;
+  switch (m.a){
+    case 'interact': interact(p); break;
+    case 'eat': eat(p); break;
+    case 'discard': discard(p); break;
+    case 'sel': if (m.i >= 0 && m.i < p.tray.length) p.sel = m.i; break;
+    case 'cook': cook(p, m.i, m.id); break;
+    case 'buy': buy(m.k, m.q); break;
+    case 'recipe': buyRecipe(m.id); break;
+    case 'upg': buyUpg(m.id); break;
+  }
+}
+// Acción local: se aplica directo o se envía al anfitrión
+function act(m){
+  if (NET.mode === 'client'){ if (NET.conn && NET.conn.open) NET.conn.send(m.t === 'in' ? m : {t:'cmd', ...m}); }
+  else if (NET.mode) handleCmd(MY_ID, m);
+}
+
+// ---------- Simulación (solo/host) ----------
+function update(dt){
+  if (S.over) return;
+  S.time += dt;
+  if (S.time >= DAY_LEN){ S.time = 0; S.day++; float('☀️ ¡Día ' + S.day + '!', 480, 300, '#ffd36b'); }
+  const night = S.time / DAY_LEN > 0.75;
+  const all = plist();
+
+  for (const p of all){
+    if (!p.alive) continue;
+    p.hunger = Math.max(0, p.hunger - dt*0.55);
+    if (p.hunger <= 0) p.health -= dt*4;
+    else if (p.hunger > 60) p.health = Math.min(100, p.health + dt);
+    if (p.health <= 0){
+      p.health = 0; p.alive = false; p.search = null; p.input = {};
+      float('💀 ' + p.name + ' se desmayó de hambre', p.x, p.y-30, '#ff6b6b');
+    }
+  }
+  if (all.length && !all.some(p => p.alive)){ S.over = true; return; }
+
+  for (const p of all){
+    p.moving = false;
+    if (!p.alive) continue;
+    const v = p.input || {};
+    let dx = (v.r?1:0) - (v.l?1:0), dy = (v.d?1:0) - (v.u?1:0);
+    if (dx || dy){
+      const len = Math.hypot(dx,dy), sp = 190*speedMul(p)*dt;
+      const nx = p.x + dx/len*sp, ny = p.y + dy/len*sp;
+      if (!hits(nx, p.y)) p.x = nx;
+      if (!hits(p.x, ny)) p.y = ny;
+      p.moving = true; p.bob += dt*12;
+    }
+    if (p.search){
+      const c = S.crates[p.search.ci];
+      const near = Math.hypot(c.x+19-p.x, c.y+19-p.y) < 60;
+      if (!v.e || !near || c.empty) p.search = null;
+      else {
+        p.search.t += dt;
+        if (p.search.t >= searchTime(p)){ finishSearch(p, c); p.search = null; }
+      }
+    }
+  }
+  for (const c of S.crates) if (c.empty && (c.refill -= dt) <= 0) c.empty = false;
+
+  for (const st of S.stoves){
+    if (!st.rec) continue;
+    if (!st.done){
+      st.t += dt;
+      if (st.t >= st.dur){ st.done = true; st.burn = 0; float('¡' + REC[st.rec].n + ' listo!', st.x+35, st.y-10, '#7dff7d'); }
+    } else if (st.rec !== 'quemada'){
+      st.burn += dt;
+      if (st.burn >= burnTime()){ st.rec = 'quemada'; float('¡Se quemó! 🔥', st.x+35, st.y-10, '#ff6b6b'); }
+    }
+  }
+
+  if (!night){
+    S.spawnT -= dt;
+    if (S.spawnT <= 0){
+      const used = new Set(S.customers.filter(c => c.state !== 'leave').map(c => c.slot));
+      const free = SLOTS.map((_,i)=>i).filter(i => !used.has(i));
+      if (free.length){
+        const slot = free[Math.floor(Math.random()*free.length)];
+        const patMax = 45 * (S.upg.sillas ? 1.5 : 1);
+        S.customers.push({x:1000, slot, state:'walk', order:S.recipes[Math.floor(Math.random()*S.recipes.length)],
+          pat:patMax, patMax, color:CUST_COLORS[Math.floor(Math.random()*CUST_COLORS.length)], happy:false, bob:Math.random()*6});
+        const alive = Math.max(1, all.filter(p => p.alive).length);
+        S.spawnT = rand(7,13) * (S.upg.letrero ? 0.6 : 1) / (1 + 0.35*(alive-1));
+      } else S.spawnT = 1;
+    }
+  }
+  for (const c of S.customers){
+    c.bob += dt*10;
+    if (c.state === 'walk'){
+      const tx = SLOTS[c.slot];
+      c.x -= 110*dt;
+      if (c.x <= tx){ c.x = tx; c.state = 'wait'; }
+    } else if (c.state === 'wait'){
+      c.pat -= dt;
+      if (c.pat <= 0){ c.state = 'leave'; S.lost++; float('😠 ¡Se fue!', c.x, STREET_Y-40, '#ff6b6b'); }
+    } else c.x -= 130*dt;
+  }
+  S.customers = S.customers.filter(c => c.x > -60);
+
+  for (const f of S.floats){ f.t += dt; f.y -= dt*25; }
+  S.floats = S.floats.filter(f => f.t < 2);
+}
+
+// ---------- Red (PeerJS, P2P) ----------
+function setStatus(t){ const el = $('status'); if (el) el.textContent = t; }
+function genCode(){ const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < 5; i++) s += A[Math.floor(Math.random()*A.length)]; return s; }
+function sendTo(pid, msg){ const c = NET.conns && NET.conns[pid]; if (c && c.open) c.send(msg); }
+function netReady(){
+  if (typeof Peer === 'undefined'){ setStatus('No se pudo cargar el multijugador (¿sin internet?). Puedes jugar solo.'); return false; }
+  return true;
+}
+function readName(){ const el = $('pname'); if (el){ META.name = el.value.trim().slice(0,14); saveMeta(); } }
+
+function startSolo(){
+  readName();
+  NET = {mode:'solo'}; MY_ID = 'h';
+  S = newGame(); addPlayer(MY_ID, META.name, META.cls);
+  hideModal();
+}
+
+function hostGame(){
+  readName();
+  if (!netReady()) return;
+  const code = genCode();
+  setStatus('Creando sala...');
+  const peer = new Peer(PEER_PREFIX + code.toLowerCase());
+  peer.on('open', () => {
+    NET = {mode:'host', peer, code, conns:{}, n:0, lastBroadcast:0};
+    MY_ID = 'h';
+    S = newGame(); addPlayer(MY_ID, META.name, META.cls);
+    hideModal();
+  });
+  peer.on('connection', conn => {
+    conn.on('data', d => onHostData(conn, d));
+    conn.on('close', () => dropConn(conn));
+    conn.on('error', () => dropConn(conn));
+  });
+  peer.on('error', e => {
+    if (e.type === 'unavailable-id' && NET.mode !== 'host'){ peer.destroy(); hostGame(); return; }
+    if (NET.mode !== 'host') setStatus('Error de red: ' + e.type);
+  });
+  peer.on('disconnected', () => { if (NET.mode === 'host' && !peer.destroyed) try { peer.reconnect(); } catch(e){} });
+}
+
+function onHostData(conn, d){
+  if (!d || NET.mode !== 'host') return;
+  if (d.t === 'join'){
+    if (conn.pid) return;
+    if (plist().length >= MAX_PLAYERS || S.over){ conn.send({t:'full'}); setTimeout(() => conn.close(), 300); return; }
+    const pid = 'p' + (++NET.n);
+    conn.pid = pid; NET.conns[pid] = conn;
+    const p = addPlayer(pid, d.name, d.cls);
+    float('👋 ' + p.name + ' se unió', 260, 300, '#7dd3ff');
+    conn.send({t:'welcome', id:pid, code:NET.code});
+    return;
+  }
+  if (conn.pid) handleCmd(conn.pid, d.t === 'cmd' ? d : d.t === 'in' ? d : null);
+}
+
+function dropConn(conn){
+  if (NET.mode !== 'host' || !conn.pid || !NET.conns[conn.pid]) return;
+  const p = S.players[conn.pid];
+  if (p){ float('🚪 ' + p.name + ' salió', 260, 300, '#aaa'); delete S.players[conn.pid]; }
+  delete NET.conns[conn.pid];
+}
+
+function broadcast(){
+  const msg = {t:'s', s:S};
+  for (const pid in NET.conns){ const c = NET.conns[pid]; if (c.open) c.send(msg); }
+}
+
+function joinGame(){
+  readName();
+  if (!netReady()) return;
+  const code = ($('jcode').value || '').trim().toUpperCase();
+  if (code.length < 4){ setStatus('Escribe el código de la sala'); return; }
+  setStatus('Conectando a la sala ' + code + '...');
+  const peer = new Peer();
+  let timer = null;
+  peer.on('open', () => {
+    const conn = peer.connect(PEER_PREFIX + code.toLowerCase(), {reliable:true});
+    timer = setTimeout(() => { setStatus('No se pudo conectar a la sala ' + code); peer.destroy(); }, 12000);
+    conn.on('open', () => {
+      clearTimeout(timer);
+      NET = {mode:'client', peer, conn, code};
+      conn.send({t:'join', name:META.name, cls:META.cls});
+    });
+    conn.on('data', onClientData);
+    conn.on('close', () => {
+      if (NET.mode !== 'client' || NET.peer !== peer) return;
+      if (S && S.over) return;
+      teardown('El anfitrión cerró la sala o se perdió la conexión.');
+    });
+  });
+  peer.on('error', e => {
+    clearTimeout(timer);
+    if (NET.mode === 'client' && NET.peer === peer){ if (e.type === 'network' || e.type === 'disconnected') return; }
+    if (e.type === 'peer-unavailable') setStatus('No existe la sala ' + code + '. Revisa el código.');
+    else if (NET.mode !== 'client') setStatus('Error de red: ' + e.type);
+  });
+}
+
+function onClientData(d){
+  if (!d || NET.mode !== 'client') return;
+  if (d.t === 'welcome'){ MY_ID = d.id; hideModal(); }
+  else if (d.t === 'full'){ teardown('La sala está llena o la partida terminó.'); }
+  else if (d.t === 's'){ S = d.s; }
+  else if (d.t === 'open'){ openUI(d.k, d.i); }
+  else if (d.t === 'token'){ META.tokens++; saveMeta(); }
+}
+
+function teardown(msg){
+  const old = NET;
+  NET = {mode:null};
+  if (old.peer) try { old.peer.destroy(); } catch(e){}
+  DISP = {}; lastSent = '';
+  showLobby();
+  if (msg) setStatus(msg);
+}
+
+// ---------- Modales / UI ----------
+function showModal(html){ $('box').innerHTML = html; $('modal').style.display = 'flex'; }
+function hideModal(){ UI.modal = null; UI.stove = null; UI.sig = ''; $('modal').style.display = 'none'; }
+function closeModal(){ if (UI.modal === 'cook' || UI.modal === 'shop') hideModal(); }
+
+function openUI(kind, i){
+  if (!me() || S.over) return;
+  UI.modal = kind; UI.stove = i ?? null; UI.sig = '';
+  renderUI();
+}
+function uiSig(){ return JSON.stringify([S.money, S.inv, S.recipes, S.upg]); }
+function renderUI(){
+  UI.sig = uiSig();
+  if (UI.modal === 'cook') renderCook();
+  else if (UI.modal === 'shop') renderShop();
+}
+
+function cookList(){ return Object.keys(REC).filter(id => S.recipes.includes(id)); }
+function needStr(n){ return Object.entries(n).map(([k,q]) => `${ING[k].e}${q>1?'x'+q:''} <span style="color:${S.inv[k]>=q?'#9f9':'#f88'}">${ING[k].n}</span>`).join(' + '); }
+
+function renderCook(){
+  const p = me();
+  let h = '<h2>🔥 Fogón — ¿qué cocinas?</h2>';
+  cookList().forEach((id,i) => {
+    const r = REC[id], dur = (r.t * cookMul(p)).toFixed(1);
+    h += `<div class="item"><div class="em">${r.e}</div><div class="txt"><b>${i+1}. ${r.n}</b><br><small>${needStr(r.need)} · ${dur}s · llena ${r.food} · vende $${r.price}</small></div>
+      <button ${canMake(id)?'':'disabled'} onclick="uiCook('${id}')">Cocinar</button></div>`;
+  });
+  h += '<p class="hint">Teclas 1-' + cookList().length + ' o clic · Esc para cerrar. ¡Recógelo a tiempo o se quema! Los ingredientes son de todo el equipo.</p>';
+  showModal(h);
+}
+function uiCook(id){ if (UI.stove == null) return; act({a:'cook', i:UI.stove, id}); hideModal(); }
+
+function renderShop(){
+  let h = `<h2>📱 Tienda <span style="float:right;color:#ffd36b">💰 $${S.money}</span></h2><h3>Ingredientes</h3>`;
+  for (const k in ING){
+    const g = ING[k];
+    h += `<div class="item"><div class="em">${g.e}</div><div class="txt"><b>${g.n}</b> — $${g.p} <small>(hay ${S.inv[k]})</small></div>
+      <button ${S.money>=g.p?'':'disabled'} onclick="act({a:'buy',k:'${k}',q:1})">x1</button>
+      <button ${S.money>=g.p*5?'':'disabled'} onclick="act({a:'buy',k:'${k}',q:5})">x5 $${g.p*5}</button></div>`;
+  }
+  h += '<h3>Recetas</h3>';
+  for (const id in REC){
+    const r = REC[id]; if (!r.cost) continue;
+    const has = S.recipes.includes(id);
+    h += `<div class="item"><div class="em">${r.e}</div><div class="txt"><b>${r.n}</b><br><small>${needStr(r.need)} · vende $${r.price}</small></div>
+      ${has ? '<small>✔ Aprendida</small>' : `<button ${S.money>=r.cost?'':'disabled'} onclick="act({a:'recipe',id:'${id}'})">$${r.cost}</button>`}</div>`;
+  }
+  h += '<h3>Mejoras</h3>';
+  for (const u of UPG){
+    const has = S.upg[u.id], locked = u.req && !S.upg[u.req];
+    h += `<div class="item"><div class="em">⭐</div><div class="txt"><b>${u.n}</b><br><small>${u.d}${locked ? ' · necesita ' + UPG.find(x=>x.id===u.req).n : ''}</small></div>
+      ${has ? '<small>✔ Comprada</small>' : `<button ${S.money>=u.cost && !locked?'':'disabled'} onclick="act({a:'upg',id:'${u.id}'})">$${u.cost}</button>`}</div>`;
+  }
+  h += '<p class="hint">Esc para cerrar. El dinero es de todo el equipo. El tiempo sigue corriendo mientras compras.</p>';
+  const box = $('box'), scroll = box.scrollTop;
+  showModal(h); box.scrollTop = scroll;
+}
+
+function showLobby(){
+  UI.modal = 'lobby'; UI.overShown = false;
+  if (!NET.mode) S = newGame();
+  let cards = '';
+  for (const c of CLASSES){
+    const owned = META.owned.includes(c.id), sel = META.cls === c.id;
+    let btn;
+    if (sel) btn = '<small style="color:#7dff7d">✔ Elegida</small>';
+    else if (owned) btn = `<button onclick="pickClass('${c.id}')">Elegir</button>`;
+    else btn = `<button ${META.tokens >= c.cost ? '' : 'disabled'} onclick="buyClass('${c.id}')">🪙 ${c.cost}</button>`;
+    cards += `<div class="item" style="${sel ? 'background:#34344a;border-radius:6px' : ''}"><div class="em">${c.e}</div>
+      <div class="txt"><b>${c.n}</b>${owned || !c.cost ? '' : ` <small>(${c.cost} tokens)</small>`}<br><small>${c.d}</small></div>${btn}</div>`;
+  }
+  const cc = curClass();
+  showModal(`<h2>🍳 Puesto de Supervivencia <span style="float:right;color:#ffb3ff">🪙 ${META.tokens}</span></h2>
+  <div class="play">Tu nombre: <input id="pname" maxlength="14" placeholder="Cocinero" value="${esc(META.name)}" style="width:150px"> &nbsp; Clase: <b>${cc.e} ${cc.n}</b></div>
+  <div class="play">
+    <button class="big" onclick="startSolo()">🎮 Jugar solo</button>
+    <button class="big blue" onclick="hostGame()">🏠 Crear sala</button>
+  </div>
+  <div class="play">
+    <input id="jcode" maxlength="6" placeholder="CÓDIGO" style="width:110px;text-transform:uppercase;letter-spacing:2px">
+    <button class="big blue" onclick="joinGame()">🚪 Unirse a sala</button>
+  </div>
+  <div id="status"></div>
+  <p class="hint" style="margin-top:4px">Multijugador cooperativo (hasta ${MAX_PLAYERS}): uno crea la sala y comparte el código. El dinero, los ingredientes y el puesto son del equipo; cada uno tiene su propia hambre.</p>
+  <h3>🏪 Tienda de clases</h3>
+  <p class="hint" style="margin-top:0">Cada cliente que atiendes tiene un ${Math.round(TOKEN_CHANCE*100)}% de probabilidad de darte un 🪙 token de comida. Los tokens se guardan en este navegador.</p>
+  ${cards}
+  <details style="margin-top:12px"><summary style="cursor:pointer;color:#ffcf6b"><b>Cómo jugar</b></summary>
+  <p>Eres el dueño de un pequeño puesto de comida. Los clientes llegan al mostrador y piden platos:
+  cocínalos en el <b>fogón</b>, recógelos y sírvelos para ganar dinero.</p>
+  <p>Pero tú también tienes <b>hambre</b>. Si llega a cero empiezas a perder salud... y si la salud se acaba, te desmayas.
+  Puedes comerte cualquier plato de tu bandeja con <b>F</b>.</p>
+  <p>Con el dinero compra ingredientes, recetas y mejoras en la <b>tienda 📱</b>.</p>
+  <p>A la derecha está el <b>depósito</b>: oscuro y lleno de cajas. A veces hay ingredientes básicos gratis... pero casi siempre sólo polvo.</p>
+  <p>¡Si no recoges un plato a tiempo, se quema! ¿Cuántos días sobrevivirán?</p></details>`);
+}
+function buyClass(id){
+  const c = CLASSES.find(x => x.id === id);
+  if (!c || META.owned.includes(id) || META.tokens < c.cost) return;
+  readName();
+  META.tokens -= c.cost; META.owned.push(id); META.cls = id; saveMeta(); showLobby();
+}
+function pickClass(id){ if (META.owned.includes(id)){ readName(); META.cls = id; saveMeta(); showLobby(); } }
+
+function showGameOver(){
+  UI.modal = 'over'; UI.overShown = true;
+  const p = me();
+  const multi = plist().length > 1 || NET.mode === 'host' || NET.mode === 'client';
+  showModal(`<h2>💀 ${multi ? 'Todo el equipo se desmayó de hambre' : 'Te desmayaste de hambre'}</h2>
+  <p>Sobrevivieron <b>${S.day}</b> día${S.day>1?'s':''}.</p>
+  <p>🍽️ Clientes servidos: <b>${S.served}</b><br>💰 Dinero ganado: <b>$${S.earned}</b><br>
+  😠 Clientes perdidos: <b>${S.lost}</b><br>📦 Ingredientes encontrados en el depósito: <b>${S.found}</b><br>
+  🪙 Tus tokens de comida ganados: <b>${p ? p.tokens : 0}</b> (total: ${META.tokens})</p>
+  <p style="text-align:center"><button class="big" onclick="teardown()">Volver al lobby</button></p>`);
+}
+
+// ---------- Entrada ----------
+addEventListener('keydown', e => {
+  if (e.target && e.target.tagName === 'INPUT'){ if (e.key === 'Enter' && e.target.id === 'jcode') joinGame(); return; }
+  const k = e.key.toLowerCase();
+  if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+  keys[k] = true;
+  if (!NET.mode || !S || S.over || UI.modal === 'lobby' || UI.modal === 'over') return;
+  if (UI.modal){
+    if (k === 'escape') closeModal();
+    else if (UI.modal === 'cook' && /^[1-9]$/.test(k)){ const id = cookList()[+k-1]; if (id && canMake(id)) uiCook(id); }
+    return;
+  }
+  if (e.repeat) return;
+  const p = me(); if (!p || !p.alive) return;
+  if (k === 'e') act({a:'interact'});
+  else if (k === 'f') act({a:'eat'});
+  else if (k === 'x') act({a:'discard'});
+  else if (/^[1-5]$/.test(k)) act({a:'sel', i:+k-1});
+});
+addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+addEventListener('blur', () => { keys = {}; });
+
+function sendInput(){
+  const v = UI.modal ? {} : {
+    l: !!(keys.a || keys.arrowleft), r: !!(keys.d || keys.arrowright),
+    u: !!(keys.w || keys.arrowup), d: !!(keys.s || keys.arrowdown), e: !!keys.e,
+  };
+  const sig = JSON.stringify(v);
+  if (sig !== lastSent || NET.mode !== 'client'){ lastSent = sig; act({t:'in', v}); }
+}
+
+// ---------- Dibujo ----------
+function emoji(e, x, y, size){ ctx.font = size + 'px ' + EMOJI_FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(e, x, y); }
+function text(t, x, y, size=14, color='#fff', align='center'){
+  ctx.font = 'bold ' + size + 'px "Segoe UI",sans-serif'; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.strokeText(t, x, y); ctx.fillStyle = color; ctx.fillText(t, x, y);
+}
+function bar(x, y, w, h, frac, color){
+  ctx.fillStyle = '#111'; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = color; ctx.fillRect(x, y, w*Math.max(0,Math.min(1,frac)), h);
+}
+// Posición suavizada (en el cliente los datos llegan 20 veces por segundo)
+function pos(p){ return (NET.mode === 'client' && DISP[p.id]) ? DISP[p.id] : p; }
+
+function drawWorld(){
+  ctx.fillStyle = '#585d64'; ctx.fillRect(0, 0, 960, 100);
+  ctx.fillStyle = '#878c93'; ctx.fillRect(0, 82, 960, 18);
+  ctx.fillStyle = '#d8d8a0';
+  for (let x = 10; x < 960; x += 70) ctx.fillRect(x, 18, 36, 4);
+
+  for (let y = 125; y < 620; y += 40) for (let x = 20; x < 500; x += 40){
+    ctx.fillStyle = (((x-20)+(y-125))/40) % 2 ? '#e8dcc4' : '#d9cbb0';
+    ctx.fillRect(x, y, 40, 40);
+  }
+  ctx.fillStyle = '#4a4540'; ctx.fillRect(520, 125, 420, 495);
+  ctx.strokeStyle = '#3d3934'; ctx.lineWidth = 2;
+  for (let y = 145; y < 620; y += 30){ ctx.beginPath(); ctx.moveTo(520,y); ctx.lineTo(940,y); ctx.stroke(); }
+  ctx.fillStyle = '#4a4540'; ctx.fillRect(500, 300, 20, 80);
+
+  ctx.fillStyle = '#3b2f2f';
+  for (const w of WALLS) ctx.fillRect(w.x, w.y, w.w, w.h);
+
+  ctx.fillStyle = '#8b5a2b'; ctx.fillRect(20, 100, 480, 25);
+  ctx.fillStyle = '#a86b35'; ctx.fillRect(20, 100, 480, 8);
+  for (let x = 20; x < 500; x += 30){ ctx.fillStyle = (x/30)%2 ? '#e74c3c' : '#fff'; ctx.fillRect(x, 90, 30, 10); }
+  text('🍲 EL PUESTO', 70, 108, 11, '#ffe9b0', 'left');
+  text('DEPÓSITO', 730, 112, 12, '#bbb');
+
+  ctx.fillStyle = '#6b4a2b'; ctx.fillRect(SHOP.x, SHOP.y, SHOP.w, SHOP.h);
+  ctx.fillStyle = '#7d5833'; ctx.fillRect(SHOP.x, SHOP.y, SHOP.w, 8);
+  emoji('📱', SHOP.x+25, SHOP.y+25, 22);
+  text('TIENDA', SHOP.x+55, SHOP.y+26, 10, '#ffe9b0');
+
+  for (const st of S.stoves){
+    ctx.globalAlpha = st.on ? 1 : 0.45;
+    ctx.fillStyle = '#7f8c8d'; ctx.fillRect(st.x, st.y, st.w, st.h);
+    ctx.fillStyle = '#5d6d6e'; ctx.fillRect(st.x+4, st.y+4, st.w-8, st.h-8);
+    ctx.fillStyle = '#222';
+    ctx.beginPath(); ctx.arc(st.x+22, st.y+22, 11, 0, 7); ctx.arc(st.x+50, st.y+22, 11, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+    if (!st.on){ emoji('🔒', st.x+35, st.y+22, 20); continue; }
+    if (st.rec){
+      if (!st.done){
+        emoji('🔥', st.x+35, st.y+20, 22);
+        bar(st.x, st.y-10, st.w, 6, st.t/st.dur, '#ffb84d');
+      } else {
+        emoji(REC[st.rec].e, st.x+35, st.y+20, 26);
+        if (st.rec !== 'quemada'){
+          const b = st.burn/burnTime();
+          bar(st.x, st.y-10, st.w, 6, 1 - b, b > 0.6 ? '#ff4d4d' : '#7dff7d');
+          if (b > 0.6 && Math.floor(performance.now()/200)%2) emoji('💨', st.x+58, st.y+4, 14);
+        }
+      }
+    }
+  }
+
+  for (const c of S.crates){
+    ctx.fillStyle = c.empty ? '#6e5a44' : '#a0703c'; ctx.fillRect(c.x, c.y, c.w, c.h);
+    ctx.strokeStyle = c.empty ? '#55463a' : '#6b4a26'; ctx.lineWidth = 3;
+    ctx.strokeRect(c.x+2, c.y+2, c.w-4, c.h-4);
+    if (!c.empty){ ctx.beginPath(); ctx.moveTo(c.x+3,c.y+3); ctx.lineTo(c.x+c.w-3,c.y+c.h-3); ctx.moveTo(c.x+c.w-3,c.y+3); ctx.lineTo(c.x+3,c.y+c.h-3); ctx.stroke(); }
+    else { ctx.fillStyle = '#2b231b'; ctx.fillRect(c.x+6, c.y+6, c.w-12, c.h-12); }
+  }
+}
+
+function drawCustomer(c){
+  const y = STREET_Y + Math.sin(c.bob)*(c.state === 'wait' ? 0.5 : 2);
+  ctx.fillStyle = c.color; ctx.beginPath(); ctx.ellipse(c.x, y+8, 13, 15, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#f2c79b'; ctx.beginPath(); ctx.arc(c.x, y-12, 10, 0, 7); ctx.fill();
+  ctx.fillStyle = '#222'; ctx.fillRect(c.x-4, y-14, 2, 3); ctx.fillRect(c.x+2, y-14, 2, 3);
+  if (c.state === 'wait'){
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.roundRect(c.x+14, y-48, 40, 34, 8); ctx.fill();
+    emoji(REC[c.order].e, c.x+34, y-32, 22);
+    const f = c.pat/c.patMax;
+    bar(c.x-20, y-30, 30, 5, f, f > 0.5 ? '#7dff7d' : f > 0.25 ? '#ffd36b' : '#ff4d4d');
+  } else if (c.state === 'leave'){
+    emoji(c.happy ? '😋' : '😠', c.x, y-34, 18);
+  }
+}
+
+function drawPlayer(p){
+  const {x, y} = pos(p), b = p.moving ? Math.sin(p.bob)*2 : 0;
+  if (!p.alive){
+    ctx.globalAlpha = 0.6; emoji('💀', x, y, 26); ctx.globalAlpha = 1;
+    text(p.name, x, y-24, 11, '#aaa');
+    return;
+  }
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(x, y+14, 13, 5, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fafafa'; ctx.beginPath(); ctx.ellipse(x, y+4+b, 13, 13, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = p.color; ctx.fillRect(x-8, y+4+b, 16, 10);   // delantal
+  ctx.fillStyle = '#f2c79b'; ctx.beginPath(); ctx.arc(x, y-10+b, 9, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x-5, y-21+b, 6, 0, 7); ctx.arc(x+5, y-21+b, 6, 0, 7); ctx.arc(x, y-25+b, 7, 0, 7); ctx.fill();
+  ctx.fillStyle = '#222'; ctx.fillRect(x-4, y-11+b, 2, 3); ctx.fillRect(x+2, y-11+b, 2, 3);
+  if (p.tray.length) emoji(REC[p.tray[Math.min(p.sel, p.tray.length-1)]].e, x+15, y+4+b, 16);
+  if (plist().length > 1) text(p.name + (p.id === MY_ID ? ' (tú)' : ''), x, y-40+b, 11, p.color);
+  if (p.search){
+    const max = searchTime(p);
+    bar(x-25, y-56, 50, 7, p.search.t/max, '#ffd36b');
+  }
+}
+
+const fog = document.createElement('canvas'); fog.width = 960; fog.height = 640;
+const fctx = fog.getContext('2d');
+function drawLighting(){
+  fctx.clearRect(0, 0, 960, 640);
+  fctx.globalCompositeOperation = 'source-over';
+  fctx.fillStyle = 'rgba(0,0,0,0.92)';
+  fctx.fillRect(520, 125, 420, 495);
+  fctx.globalCompositeOperation = 'destination-out';
+  const R = S.upg.linterna ? 200 : 125;
+  for (const p of plist()){
+    if (!p.alive) continue;
+    const {x, y} = pos(p);
+    if (x < 470) continue;
+    const g = fctx.createRadialGradient(x, y, R*0.25, x, y, R);
+    g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    fctx.fillStyle = g; fctx.fillRect(x-R, y-R, R*2, R*2);
+  }
+  fctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(fog, 0, 0);
+}
+
+function draw(){
+  ctx.clearRect(0, 0, 960, 640);
+  drawWorld();
+  for (const c of S.customers) drawCustomer(c);
+  for (const p of plist()) if (p.id !== MY_ID) drawPlayer(p);
+  if (me()) drawPlayer(me());
+  drawLighting();
+
+  const frac = S.time / DAY_LEN;
+  if (frac > 0.7){
+    ctx.fillStyle = `rgba(10,10,50,${Math.min(0.4, (frac-0.7)*4)})`;
+    ctx.fillRect(0, 0, 960, 640);
+  }
+
+  const p = me();
+  if (p && p.alive && !UI.modal && !S.over){
+    const t = nearestInteract(pos(p));
+    if (t){
+      if (t.type === 'counter'){ ctx.strokeStyle = '#ffd36b'; ctx.lineWidth = 2; ctx.strokeRect(t.cx-40, 100, 80, 25); }
+      text('[E] ' + t.label, t.cx, t.type === 'counter' ? 140 : t.cy - 38, 12, '#ffd36b');
+    }
+    if (p.hunger < 25 && Math.floor(performance.now()/400)%2) text('⚠ ¡Tienes mucha hambre! Come algo (F)', 260, 610, 14, '#ff6b6b');
+  }
+  if (p && !p.alive && !S.over) text('💀 Te desmayaste. Tus compañeros siguen cocinando...', 480, 330, 18, '#ff6b6b');
+  if (frac > 0.75) text('🌙 Noche — no llegan clientes nuevos', 260, 140, 12, '#aab4ff');
+
+  for (const f of S.floats){
+    if (f.owner && f.owner !== MY_ID) continue;
+    ctx.globalAlpha = Math.max(0, 1 - f.t/2);
+    text(f.text, f.x, f.y, 14, f.color);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function updateHud(){
+  const p = me();
+  $('money').textContent = '$' + S.money;
+  $('day').textContent = S.day;
+  const mins = Math.floor(8*60 + (S.time/DAY_LEN)*16*60);
+  $('clock').textContent = String(Math.floor(mins/60)%24).padStart(2,'0') + ':' + String(mins%60).padStart(2,'0');
+  $('tokens').textContent = META.tokens;
+  $('cls').textContent = p ? clsOf(p).e + ' ' + clsOf(p).n : '';
+  const hunger = p ? p.hunger : 100, health = p ? p.health : 100;
+  const hb = $('hbar'); hb.style.width = hunger + '%';
+  hb.style.background = hunger > 50 ? '#e0a040' : hunger > 20 ? '#e07a40' : '#e04040';
+  $('lbar').style.width = health + '%';
+  $('inv').innerHTML = Object.keys(ING).map(k => `<span class="${S.inv[k]?'':'zero'}">${ING[k].e} ${ING[k].n}: <b>${S.inv[k]}</b></span>`).join('');
+  let t = '';
+  const tray = p ? p.tray : [];
+  for (let i = 0; i < trayMax(); i++){
+    const id = tray[i];
+    t += `<span class="slot ${id && i===p.sel ? 'sel' : ''}" title="${id ? REC[id].n : ''}"><small>${i+1}</small>${id ? REC[id].e : ''}</span>`;
+  }
+  $('tray').innerHTML = t;
+
+  let r = '';
+  if (NET.mode === 'host' || NET.mode === 'client'){
+    r += `Sala: <span class="code">${NET.code}</span> <small>${NET.mode === 'host' ? '(eres el anfitrión)' : ''}</small><br>`;
+    r += plist().map(q => `<span style="color:${q.color}">●</span> ${esc(q.name)}${q.id===MY_ID?' (tú)':''} ${q.alive ? '❤️' + Math.ceil(q.health) + ' 🍖' + Math.ceil(q.hunger) : '💀'}`).join('<br>');
+  } else if (NET.mode === 'solo') r += 'Partida en solitario';
+  if (NET.mode) r += `<div style="margin-top:6px"><button class="gray" onclick="if(confirm('¿Salir al lobby?')) teardown()">Salir al lobby</button></div>`;
+  $('room').innerHTML = r;
+  $('room').style.display = r ? 'block' : 'none';
+}
+
+// ---------- Bucle ----------
+// Simulación con setInterval (sigue funcionando aunque la pestaña del anfitrión quede en segundo plano)
+let simLast = performance.now();
+setInterval(() => {
+  const now = performance.now();
+  let dt = Math.min(1.5, (now - simLast)/1000); simLast = now;
+  if (!NET.mode || !S) return;
+  if (UI.modal !== 'lobby') sendInput();
+  if (NET.mode === 'solo' || NET.mode === 'host'){
+    while (dt > 0){ const step = Math.min(0.05, dt); update(step); dt -= step; }
+  }
+  if (NET.mode === 'host') broadcast();
+  if (S.over && !UI.overShown) showGameOver();
+}, 33);
+
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.05, (now - last)/1000); last = now;
+  if (NET.mode && S){
+    if (NET.mode === 'client'){
+      for (const p of plist()){
+        const d = DISP[p.id] || (DISP[p.id] = {x:p.x, y:p.y});
+        const k = Math.min(1, dt*15);
+        d.x += (p.x - d.x)*k; d.y += (p.y - d.y)*k;
+        if (Math.hypot(p.x-d.x, p.y-d.y) > 120){ d.x = p.x; d.y = p.y; }
+      }
+    }
+    if ((UI.modal === 'cook' || UI.modal === 'shop') && uiSig() !== UI.sig) renderUI();
+    if (UI.modal === 'cook' && S.stoves[UI.stove] && S.stoves[UI.stove].rec) hideModal();
+  }
+  draw();
+  if (now - lastHud > 100){ updateHud(); lastHud = now; }
+  requestAnimationFrame(loop);
+}
+S = newGame();
+showLobby();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
